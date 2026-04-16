@@ -1,34 +1,54 @@
-let Engine = Matter.Engine,
-    Bodies = Matter.Bodies,
-    Composite = Matter.Composite;
+class Brush {
+  constructor(x, y, radius = 50) {
+    this.radius = radius;
+    this.body = Bodies.circle(x, y, radius);
+    this.body.restitution = 1; // Make the brush bouncy
+    this.color = color(random(255), random(255), random(255));
 
-let engine;
-let brush;
-let obstacle; 
-
-function setup() {
-  createCanvas(windowWidth, windowHeight);
-  engine = Engine.create();
-
-  brush = Bodies.circle(width/2, height/4, 50);
-  obstacle = Bodies.rectangle(width/2, 600, 300, 50);
-  obstacle.isStatic = true;
-
-  Composite.add(engine.world, obstacle);
-  Composite.add(engine.world, brush);
+ 
+    //Subscribe to collision events for this brush
+    Matter.Events.on(engine, 'collisionStart', (event) => {
+      let pairs = event.pairs;
+      for (let pair of pairs) {
+        if (pair.bodyA === this.body || pair.bodyB === this.body) {
+           this.onCollision();
+        }
+      }
+    });
 
 }
 
-function draw() {
-  background(220);
 
-  noStroke();
-  fill(255, 0, 0);
-  circle (brush.position.x, brush.position.y, brush.circleRadius * 2 );
+display() {
+    this.keepInBounds();
+    noStroke();
+    fill(this.color);
+    circle(this.body.position.x, this.body.position.y, this.radius * 2);
+  }
+  
+  onCollision() {
+    this.color = color(random(255), random(255), random(255));
+  }
 
-
-  rectMode(CENTER);
-  fill(0, 255, 0);
-  rect(obstacle.position.x, obstacle.position.y, 300, 50);  
-  Engine.update(engine);
+  keepInBounds() {
+    let pos = this.body.position;
+    let r = this.radius;
+        
+       if (pos.x > width-r){
+            Body.setPosition(this.body, { x: width-r, y: pos.y });
+            Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });
+        }
+        if (pos.x < r){ 
+            Body.setPosition(this.body, { x: r, y: pos.y });
+            Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });         
+        }
+        if (pos.y > height-r){
+            Body.setPosition(this.body, { x: pos.x, y: height-r });
+            Body.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
+        }
+        if (pos.y < r){
+            Body.setPosition(this.body, { x: pos.x, y: r });
+            Body.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
+        }
+    }
 }
