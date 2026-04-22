@@ -30,6 +30,17 @@ let smoothedGravityY = 0;
 let smoothedTwist = 0;
 let flipperPower = 1;
 
+function normalizeTilt(value, maxAngle = 35, deadZone = 3) {
+  const clamped = constrain(value, -maxAngle, maxAngle);
+
+  if (abs(clamped) <= deadZone) {
+    return 0;
+  }
+
+  const magnitude = map(abs(clamped), deadZone, maxAngle, 0, 1);
+  return clamped < 0 ? -magnitude : magnitude;
+}
+
 function setup() {
   createCanvas(windowWidth, windowHeight);
   engine = Engine.create();
@@ -244,8 +255,10 @@ function updateSensorControls() {
   const rawY = sensorInput.active ? sensorInput.gamma : (typeof rotationY === 'number' ? rotationY : 0);
   const rawZ = sensorInput.active ? sensorInput.alpha : (typeof rotationZ === 'number' ? rotationZ : 0);
 
-  const targetGravityX = map(constrain(rawY, -35, 35), -35, 35, -0.68, 0.68);
-  const targetGravityY = map(constrain(rawX, -35, 35), -35, 35, -0.42, 0.42);
+  const tiltX = normalizeTilt(rawY);
+  const tiltY = normalizeTilt(rawX);
+  const targetGravityX = tiltX * 0.78;
+  const targetGravityY = -tiltY * 0.78;
   const twist = map(constrain(rawZ, -180, 180), -180, 180, -PI, PI);
 
   smoothedGravityX = lerp(smoothedGravityX, targetGravityX, 0.08);
@@ -253,7 +266,7 @@ function updateSensorControls() {
   smoothedTwist = lerp(smoothedTwist, twist, 0.12);
 
   engine.world.gravity.x = smoothedGravityX;
-  engine.world.gravity.y = constrain(1 + smoothedGravityY, 0.45, 1.45);
+  engine.world.gravity.y = smoothedGravityY;
 
   flipperPower = map(abs(smoothedTwist), 0, PI / 2, 1.0, 1.35);
 
