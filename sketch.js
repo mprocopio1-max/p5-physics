@@ -22,6 +22,8 @@ let sensorInput = {
   beta: 0,
   gamma: 0,
   alpha: 0,
+  baseBeta: 0,
+  baseGamma: 0,
   active: false,
 };
 
@@ -39,6 +41,11 @@ function normalizeTilt(value, maxAngle = 35, deadZone = 3) {
 
   const magnitude = map(abs(clamped), deadZone, maxAngle, 0, 1);
   return clamped < 0 ? -magnitude : magnitude;
+}
+
+function calibrateSensorBaseline(beta, gamma) {
+  sensorInput.baseBeta = beta;
+  sensorInput.baseGamma = gamma;
 }
 
 function setup() {
@@ -255,10 +262,12 @@ function updateSensorControls() {
   const rawY = sensorInput.active ? sensorInput.gamma : (typeof rotationY === 'number' ? rotationY : 0);
   const rawZ = sensorInput.active ? sensorInput.alpha : (typeof rotationZ === 'number' ? rotationZ : 0);
 
-  const tiltX = normalizeTilt(rawY);
-  const tiltY = normalizeTilt(rawX);
-  const targetGravityX = tiltX * 0.78;
-  const targetGravityY = -tiltY * 0.78;
+  const deltaBeta = rawX - sensorInput.baseBeta;
+  const deltaGamma = rawY - sensorInput.baseGamma;
+  const tiltX = normalizeTilt(deltaGamma, 28, 1.5);
+  const tiltY = normalizeTilt(deltaBeta, 28, 1.5);
+  const targetGravityX = tiltX * 1.05;
+  const targetGravityY = -tiltY * 1.05;
   const twist = map(constrain(rawZ, -180, 180), -180, 180, -PI, PI);
 
   smoothedGravityX = lerp(smoothedGravityX, targetGravityX, 0.08);
@@ -285,6 +294,11 @@ function setupSensorListeners() {
     sensorInput.gamma = typeof event.gamma === 'number' ? event.gamma : 0;
     sensorInput.alpha = typeof event.alpha === 'number' ? event.alpha : 0;
     sensorInput.active = true;
+
+    if (!sensorInput.calibrated) {
+      calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
+      sensorInput.calibrated = true;
+    }
   };
 
   const handleMotion = (event) => {
@@ -371,6 +385,7 @@ function requestSensorAccess() {
 
   Promise.all(requests).then(() => {
     sensorInput.active = true;
+    sensorInput.calibrated = false;
     if (sensorButton) {
       sensorButton.remove();
       sensorButton = null;
