@@ -36,6 +36,7 @@ let smoothedGravityX = 0;
 let smoothedGravityY = 0;
 let smoothedTwist = 0;
 let flipperPower = 1;
+let sensorRequestInFlight = false;
 
 function normalizeTilt(value, maxAngle = 35, deadZone = 3) {
   const clamped = constrain(value, -maxAngle, maxAngle);
@@ -420,6 +421,16 @@ function createSensorButton() {
 }
 
 function requestSensorAccess() {
+  if (sensorRequestInFlight) {
+    console.log('[SENSOR] Richiesta gia in corso, skip');
+    return;
+  }
+
+  if (sensorInput.active) {
+    sensorStatus = 'Sensori gia attivi';
+    return;
+  }
+
   if (typeof DeviceOrientationEvent === 'undefined') {
     sensorStatus = 'Questo browser non supporta i sensori di orientamento';
     console.error('[SENSOR] Browser non supporta DeviceOrientationEvent');
@@ -447,6 +458,7 @@ function requestSensorAccess() {
   }
 
   const requests = [];
+  sensorRequestInFlight = true;
 
   console.log('[SENSOR] Starting permission requests...');
   console.log('[SENSOR] DeviceOrientationEvent.requestPermission exists?', typeof DeviceOrientationEvent.requestPermission === 'function');
@@ -462,7 +474,7 @@ function requestSensorAccess() {
         })
         .catch(error => {
           console.error('[SENSOR] DeviceOrientation error:', error);
-          throw error;
+          return 'error';
         })
     );
   }
@@ -477,7 +489,7 @@ function requestSensorAccess() {
         })
         .catch(error => {
           console.error('[SENSOR] DeviceMotion error:', error);
-          throw error;
+          return 'error';
         })
     );
   }
@@ -493,21 +505,26 @@ function requestSensorAccess() {
       sensorButton.remove();
       sensorButton = null;
     }
+    sensorRequestInFlight = false;
     return;
   }
 
-  Promise.all(requests)
+  Promise.allSettled(requests)
     .then((results) => {
       console.log('[SENSOR] All permissions resolved:', results);
-      const denied = results.some((result) => result !== 'granted');
+      const values = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const granted = values.includes('granted');
+      const denied = values.includes('denied');
 
-      if (denied) {
+      if (denied && !granted) {
         sensorStatus = 'Permesso sensori negato dal browser';
         console.error('[SENSOR] Permission denied by user');
         return;
       }
 
-      console.log('[SENSOR] All permissions granted! Setting up listeners...');
+      console.log('[SENSOR] Permission flow completed, enabling listeners...');
       sensorInput.active = true;
       sensorInput.calibrated = false;
       setupSensorListeners();
@@ -519,8 +536,15 @@ function requestSensorAccess() {
       }
     })
     .catch((error) => {
-      sensorStatus = 'Errore nella richiesta dei sensori: ' + error.message;
+      // Safari may occasionally reject one permission call even when orientation events are available.
+      setupSensorListeners();
+      sensorInput.active = true;
+      sensorInput.calibrated = false;
+      sensorStatus = 'Sensori parzialmente attivi, prova a inclinare';
       console.error('[SENSOR] Promise error:', error);
+    })
+    .finally(() => {
+      sensorRequestInFlight = false;
     });
 }
 
