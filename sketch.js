@@ -17,6 +17,7 @@ let score = 0;
 let lives = 3;
 let gameOver = false;
 let sensorButton;
+let sensorStatus = 'Premi il pulsante e inclina il telefono';
 
 let sensorInput = {
   beta: 0,
@@ -342,6 +343,9 @@ function drawHUD() {
   textAlign(RIGHT, TOP);
   text('Tilt = gravita  Flipper = touch / frecce', width - 20, 62);
   text('rotationZ = spinta extra', width - 20, 88);
+
+  textAlign(LEFT, TOP);
+  text(sensorStatus, 20, 114);
   pop();
 }
 
@@ -365,6 +369,16 @@ function createSensorButton() {
 }
 
 function requestSensorAccess() {
+  if (typeof DeviceOrientationEvent === 'undefined') {
+    sensorStatus = 'Questo browser non supporta i sensori di orientamento';
+    return;
+  }
+
+  if (!window.isSecureContext && location.protocol !== 'http:' && location.protocol !== 'https:') {
+    sensorStatus = 'Apri il gioco via HTTPS o localhost per usare i sensori';
+    return;
+  }
+
   const requests = [];
 
   if (typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -376,6 +390,9 @@ function requestSensorAccess() {
   }
 
   if (requests.length === 0) {
+    sensorInput.active = true;
+    calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
+    sensorStatus = 'Sensori attivi';
     if (sensorButton) {
       sensorButton.remove();
       sensorButton = null;
@@ -383,13 +400,23 @@ function requestSensorAccess() {
     return;
   }
 
-  Promise.all(requests).then(() => {
+  Promise.all(requests).then((results) => {
+    const denied = results.some((result) => result !== 'granted');
+
+    if (denied) {
+      sensorStatus = 'Permesso sensori negato dal browser';
+      return;
+    }
+
     sensorInput.active = true;
     sensorInput.calibrated = false;
+    sensorStatus = 'Sensori attivi';
     if (sensorButton) {
       sensorButton.remove();
       sensorButton = null;
     }
+  }).catch(() => {
+    sensorStatus = 'Impossibile attivare i sensori in questo browser';
   });
 }
 
