@@ -1,660 +1,425 @@
 let Engine = Matter.Engine,
-    Bodies = Matter.Bodies,
     Body = Matter.Body,
-  Composite = Matter.Composite,
-  Constraint = Matter.Constraint,
+    Composite = Matter.Composite,
     Events = Matter.Events;
 
 let engine;
+let world;
+
 let brushes = [];
-let ball;
+let brushById = new Map();
 let obstacles = [];
-let bumpers = [];
 let flippers = [];
-let drains = [];
+let drain;
 
 let score = 0;
 let lives = 3;
 let gameOver = false;
+let nextSpawnFrame = -1;
+
+let leftTouchActive = false;
+let rightTouchActive = false;
 let sensorButton;
-let sensorStatus = 'Premi il pulsante e inclina il telefono';
 
-let sensorInput = {
-  beta: 0,
-  gamma: 0,
-  alpha: 0,
-  baseBeta: 0,
-  baseGamma: 0,
-  active: false,
-  calibrated: false,
-  lastEventMs: 0,
-};
+const BALL_RADIUS = 12;
+const MAX_BALL_SPEED = 22;
 
-let sensorListenersAttached = false;
+function setupField() {
+  const wallColor = color(40, 57, 77);
+  const wallStroke = color(200, 210, 225);
 
-let smoothedGravityX = 0;
-let smoothedGravityY = 0;
-let smoothedTwist = 0;
-let flipperPower = 1;
-let sensorRequestInFlight = false;
+  obstacles.push(
+    new Obstacle(width * 0.5, 20, width - 30, 28, 0, {
+      label: 'wall',
+      color: wallColor,
+      strokeColor: wallStroke,
+      restitution: 0.75,
+      friction: 0.01
+    })
+  );
 
-function normalizeTilt(value, maxAngle = 35, deadZone = 3) {
-  const clamped = constrain(value, -maxAngle, maxAngle);
+  obstacles.push(
+    new Obstacle(14, height * 0.5, 28, height, 0, {
+      label: 'wall',
+      color: wallColor,
+      strokeColor: wallStroke,
+      restitution: 0.78,
+      friction: 0.01
+    })
+  );
 
-  if (abs(clamped) <= deadZone) {
-    return 0;
+  obstacles.push(
+    new Obstacle(width - 14, height * 0.5, 28, height, 0, {
+      label: 'wall',
+      color: wallColor,
+      strokeColor: wallStroke,
+      restitution: 0.78,
+      friction: 0.01
+    })
+  );
+
+  // Inner guides funnel the ball toward active flippers.
+  obstacles.push(
+    new Obstacle(width * 0.24, height * 0.78, width * 0.26, 18, -0.42, {
+      label: 'obstacle',
+      color: color(81, 105, 125),
+      restitution: 0.58,
+      friction: 0.015
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.76, height * 0.78, width * 0.26, 18, 0.42, {
+      label: 'obstacle',
+      color: color(81, 105, 125),
+      restitution: 0.58,
+      friction: 0.015
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.35, height * 0.46, width * 0.28, 16, 0.45, {
+      label: 'obstacle',
+      color: color(96, 124, 148),
+      restitution: 0.62,
+      friction: 0.02
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.67, height * 0.57, width * 0.26, 16, -0.52, {
+      label: 'obstacle',
+      color: color(96, 124, 148),
+      restitution: 0.62,
+      friction: 0.02
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.5, height * 0.26, 52, 52, 0, {
+      label: 'bumper',
+      shape: 'circle',
+      radius: 26,
+      color: color(248, 120, 104),
+      strokeColor: color(255, 230, 225),
+      restitution: 1.45,
+      friction: 0,
+      frictionStatic: 0
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.3, height * 0.33, 46, 46, 0, {
+      label: 'bumper',
+      shape: 'circle',
+      radius: 23,
+      color: color(255, 176, 75),
+      strokeColor: color(255, 237, 197),
+      restitution: 1.35,
+      friction: 0,
+      frictionStatic: 0
+    })
+  );
+
+  obstacles.push(
+    new Obstacle(width * 0.7, height * 0.36, 48, 48, 0, {
+      label: 'bumper',
+      shape: 'circle',
+      radius: 24,
+      color: color(100, 201, 255),
+      strokeColor: color(223, 244, 255),
+      restitution: 1.4,
+      friction: 0,
+      frictionStatic: 0
+    })
+  );
+
+  drain = new Obstacle(width * 0.5, height - 8, width * 0.36, 20, 0, {
+    label: 'drain',
+    isSensor: true,
+    color: color(170, 52, 52, 70),
+    strokeColor: color(250, 190, 190, 100)
+  });
+  obstacles.push(drain);
+
+  for (const obstacle of obstacles) {
+    Composite.add(world, obstacle.body);
   }
 
-  const magnitude = map(abs(clamped), deadZone, maxAngle, 0, 1);
-  return clamped < 0 ? -magnitude : magnitude;
+  const flipperY = height - 70;
+  const flipperLen = min(150, width * 0.28);
+  const flipperThickness = 20;
+
+  const leftFlipper = new Flipper(width * 0.36, flipperY, flipperLen, flipperThickness, 'left');
+  const rightFlipper = new Flipper(width * 0.64, flipperY, flipperLen, flipperThickness, 'right');
+  flippers.push(leftFlipper, rightFlipper);
+
+  for (const flipper of flippers) {
+    Composite.add(world, [flipper.body, flipper.pivot]);
+  }
 }
 
-function calibrateSensorBaseline(beta, gamma) {
-  sensorInput.baseBeta = beta;
-  sensorInput.baseGamma = gamma;
+function spawnBall(x = width * 0.52, y = height * 0.12) {
+  const brush = new Brush(x, y, BALL_RADIUS, {
+    label: 'ball',
+    color: color(255, 230, 120),
+    restitution: 0.32,
+    friction: 0.002,
+    frictionAir: 0.0018,
+    density: 0.0024
+  });
+
+  brushes.push(brush);
+  brushById.set(brush.body.id, brush);
+  Composite.add(world, brush.body);
+}
+
+function removeBall(brush) {
+  const idx = brushes.indexOf(brush);
+  if (idx >= 0) {
+    brushes.splice(idx, 1);
+  }
+  brushById.delete(brush.body.id);
+  Composite.remove(world, brush.body);
+}
+
+function handleBallDrain(brush) {
+  if (!brush || brush.isDraining || gameOver) {
+    return;
+  }
+  brush.isDraining = true;
+  removeBall(brush);
+
+  lives -= 1;
+  if (lives > 0) {
+    nextSpawnFrame = frameCount + 24;
+  } else {
+    gameOver = true;
+  }
+}
+
+function resolveCollision(ballBody, otherBody) {
+  const brush = brushById.get(ballBody.id);
+  if (!brush) {
+    return;
+  }
+
+  const role = otherBody.label;
+  if (role === 'bumper') {
+    score += 100;
+
+    const dx = ballBody.position.x - otherBody.position.x;
+    const dy = ballBody.position.y - otherBody.position.y;
+    const distance = max(1, Math.sqrt(dx * dx + dy * dy));
+    const push = 0.045;
+
+    brush.applyImpulse((dx / distance) * push, (dy / distance) * push);
+    brush.boost(1.06);
+  } else if (role === 'flipper') {
+    score += 5;
+    brush.boost(1.14);
+  } else if (role === 'obstacle') {
+    const vx = ballBody.velocity.x;
+    const vy = ballBody.velocity.y;
+    brush.applyImpulse(vy * 0.0018, -vx * 0.0018);
+  } else if (role === 'drain') {
+    handleBallDrain(brush);
+  }
+}
+
+function registerCollisions() {
+  Events.on(engine, 'collisionStart', (event) => {
+    for (const pair of event.pairs) {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      const aIsBall = bodyA.label === 'ball';
+      const bIsBall = bodyB.label === 'ball';
+
+      if (aIsBall && !bIsBall) {
+        resolveCollision(bodyA, bodyB);
+      } else if (bIsBall && !aIsBall) {
+        resolveCollision(bodyB, bodyA);
+      }
+    }
+  });
+}
+
+function createSensorButton() {
+  sensorButton = createButton('Request Sensor Access');
+  sensorButton.position(10, 10);
+  sensorButton.style('z-index', '10');
+
+  sensorButton.mousePressed(() => {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().catch(console.error);
+    }
+
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().catch(console.error);
+    }
+
+    sensorButton.remove();
+  });
+}
+
+function updateGravityFromSensors() {
+  const tiltX = constrain(rotationY || 0, -45, 45);
+  const tiltY = constrain(rotationX || 0, -45, 45);
+
+  // Keep base downward pull while tilt shifts horizontal/vertical flow.
+  world.gravity.x = map(tiltX, -45, 45, -0.55, 0.55);
+  world.gravity.y = 0.75 + map(tiltY, -45, 45, -0.5, 0.5);
+}
+
+function updateFlipperInput() {
+  const sensorLeft = (rotationY || 0) < -17;
+  const sensorRight = (rotationY || 0) > 17;
+  const keyboardLeft = keyIsDown(65) || keyIsDown(37);
+  const keyboardRight = keyIsDown(68) || keyIsDown(39);
+
+  const leftActive = leftTouchActive || sensorLeft || keyboardLeft;
+  const rightActive = rightTouchActive || sensorRight || keyboardRight;
+
+  flippers[0].update(leftActive);
+  flippers[1].update(rightActive);
+}
+
+function keepBallSpeedReasonable() {
+  for (const brush of brushes) {
+    const velocity = brush.body.velocity;
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    if (speed > MAX_BALL_SPEED) {
+      const factor = MAX_BALL_SPEED / speed;
+      Body.setVelocity(brush.body, {
+        x: velocity.x * factor,
+        y: velocity.y * factor
+      });
+    }
+  }
+}
+
+function drawHud() {
+  fill(255);
+  noStroke();
+  textAlign(LEFT, TOP);
+  textSize(20);
+  text('Score: ' + score, 16, 54);
+  text('Lives: ' + lives, 16, 80);
+
+  if (gameOver) {
+    textAlign(CENTER, CENTER);
+    textSize(34);
+    fill(255, 220, 220);
+    text('GAME OVER', width * 0.5, height * 0.5 - 10);
+    textSize(18);
+    text('Tap to restart', width * 0.5, height * 0.5 + 28);
+  }
+}
+
+function restartGame() {
+  for (const brush of brushes) {
+    Composite.remove(world, brush.body);
+  }
+  brushes = [];
+  brushById.clear();
+
+  score = 0;
+  lives = 3;
+  gameOver = false;
+  nextSpawnFrame = -1;
+  spawnBall();
 }
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   engine = Engine.create();
-  engine.world.gravity.scale = 0.0012;
+  world = engine.world;
 
-  ball = new Ball(width * 0.82, height * 0.78, 18);
-  brushes = [ball];
-
-  buildPlayfield();
-  addWorldBodies();
-  attachCollisionHandler();
-  setupSensorListeners();
+  setupField();
+  spawnBall();
+  registerCollisions();
   createSensorButton();
-  resetBall(true);
 }
 
 function draw() {
-  updateSensorControls();
-  updateFlippers();
+  background(12, 22, 35);
+
+  updateGravityFromSensors();
+  updateFlipperInput();
+
+  if (!gameOver && brushes.length === 0 && lives > 0 && nextSpawnFrame > 0 && frameCount >= nextSpawnFrame) {
+    spawnBall();
+    nextSpawnFrame = -1;
+  }
+
   Engine.update(engine);
+  keepBallSpeedReasonable();
 
-  background(11, 16, 31);
-  drawBackdrop();
-
-  for (let obstacle of obstacles) {
+  for (const obstacle of obstacles) {
     obstacle.display();
   }
 
-  for (let bumper of bumpers) {
-    bumper.display();
-  }
-
-  for (let drain of drains) {
-    drain.display();
-  }
-
-  for (let brush of brushes) {
-    brush.display();
-  }
-
-  for (let flipper of flippers) {
+  for (const flipper of flippers) {
     flipper.display();
   }
 
-  drawHUD();
-
-  if (gameOver) {
-    drawGameOverOverlay();
+  for (const brush of brushes) {
+    brush.display();
   }
+
+  drawHud();
 }
 
-function buildPlayfield() {
-  obstacles = [
-    new Obstacle(width * 0.02, height * 0.5, 40, height, 0, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.98, height * 0.5, 40, height, 0, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.5, 20, width, 40, 0, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.16, height * 0.55, 18, height * 0.48, 0.12, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.84, height * 0.55, 18, height * 0.48, -0.12, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.22, height * 0.78, width * 0.28, 18, -0.42, { type: 'ramp', label: 'ramp' }),
-    new Obstacle(width * 0.78, height * 0.74, width * 0.28, 18, 0.44, { type: 'ramp', label: 'ramp' }),
-    new Obstacle(width * 0.28, height * 0.42, width * 0.2, 18, -0.25, { type: 'gate', label: 'wall' }),
-    new Obstacle(width * 0.72, height * 0.42, width * 0.2, 18, 0.25, { type: 'gate', label: 'wall' }),
-    new Obstacle(width * 0.5, height * 0.28, width * 0.12, 18, 0, { type: 'gate', label: 'wall' }),
-    new Obstacle(width * 0.16, height * 0.95, width * 0.28, 30, 0, { type: 'wall', label: 'wall' }),
-    new Obstacle(width * 0.84, height * 0.95, width * 0.28, 30, 0, { type: 'wall', label: 'wall' }),
-  ];
-
-  bumpers = [
-    new Bumper(width * 0.5, height * 0.18, 28, { scoreValue: 250, color: color(255, 183, 3) }),
-    new Bumper(width * 0.36, height * 0.31, 22, { scoreValue: 150, color: color(120, 210, 255) }),
-    new Bumper(width * 0.64, height * 0.31, 22, { scoreValue: 150, color: color(251, 133, 0) }),
-    new Bumper(width * 0.5, height * 0.44, 18, { scoreValue: 100, color: color(42, 157, 143) }),
-  ];
-
-  flippers = [
-    new Flipper(width * 0.36, height * 0.87, 120, 'left', { color: color(244, 208, 111) }),
-    new Flipper(width * 0.64, height * 0.87, 120, 'right', { color: color(244, 208, 111) }),
-  ];
-
-  drains = [
-    new Drain(width * 0.5, height * 0.98, width * 0.24, 26),
-  ];
-}
-
-function addWorldBodies() {
-  const bodies = [];
-
-  for (let obstacle of obstacles) {
-    bodies.push(obstacle.body);
-  }
-
-  for (let bumper of bumpers) {
-    bodies.push(bumper.body);
-  }
-
-  for (let flipper of flippers) {
-    bodies.push(flipper.body);
-    bodies.push(flipper.anchor);
-    bodies.push(flipper.hinge);
-  }
-
-  for (let drain of drains) {
-    bodies.push(drain.body);
-  }
-
-  bodies.push(ball.body);
-  Composite.add(engine.world, bodies);
-}
-
-function attachCollisionHandler() {
-  Events.on(engine, 'collisionStart', handleCollisionStart);
-}
-
-function handleCollisionStart(event) {
-  for (let pair of event.pairs) {
-    const bodyA = pair.bodyA;
-    const bodyB = pair.bodyB;
-    const ballBody = bodyA.label === 'ball' ? bodyA : bodyB.label === 'ball' ? bodyB : null;
-
-    if (!ballBody) {
-      continue;
-    }
-
-    const otherBody = ballBody === bodyA ? bodyB : bodyA;
-    const otherObject = otherBody.gameObject;
-
-    if (otherBody.label === 'bumper' && otherObject) {
-      if (frameCount - otherObject.lastScoreFrame > 10) {
-        otherObject.lastScoreFrame = frameCount;
-        otherObject.pulse();
-        score += otherObject.scoreValue;
-        nudgeBallFromBody(ballBody, otherBody, 7.5);
-      }
-      continue;
-    }
-
-    if (otherBody.label === 'flipper' && otherObject) {
-      otherObject.hitBall(ballBody, flipperPower * (otherObject.active ? 1 : 0.35));
-      continue;
-    }
-
-    if (otherBody.label === 'ramp' && otherObject) {
-      otherObject.pulse();
-      const rampAngle = otherBody.angle;
-      Body.setVelocity(ballBody, {
-        x: ballBody.velocity.x + Math.cos(rampAngle) * 2.8,
-        y: ballBody.velocity.y + Math.sin(rampAngle) * 2.8,
-      });
-      continue;
-    }
-
-    if (otherBody.label === 'wall' && otherObject) {
-      otherObject.pulse();
-      continue;
-    }
-
-    if (otherBody.label === 'drain') {
-      handleDrainHit();
-    }
-  }
-}
-
-function nudgeBallFromBody(ballBody, sourceBody, strength) {
-  const dx = ballBody.position.x - sourceBody.position.x;
-  const dy = ballBody.position.y - sourceBody.position.y;
-  const distance = Math.hypot(dx, dy) || 1;
-
-  Body.setVelocity(ballBody, {
-    x: ballBody.velocity.x + (dx / distance) * strength,
-    y: ballBody.velocity.y + (dy / distance) * strength,
-  });
-}
-
-function handleDrainHit() {
-  if (gameOver) {
-    return;
-  }
-
-  lives -= 1;
-
-  if (lives <= 0) {
-    lives = 0;
-    gameOver = true;
-    ball.reset(width * 0.5, height * 0.55);
-    Body.setVelocity(ball.body, { x: 0, y: 0 });
-    return;
-  }
-
-  resetBall(false);
-}
-
-function resetBall(initialLaunch = false) {
-  ball.reset(width * 0.82, height * 0.74);
-
-  const launchStrength = initialLaunch ? -5.2 : -4.4;
-  Body.setVelocity(ball.body, {
-    x: random(-0.8, 0.8),
-    y: launchStrength,
-  });
-}
-
-function restartGame() {
-  score = 0;
-  lives = 3;
-  gameOver = false;
-  clearFlippers();
-  resetBall(true);
-}
-
-function updateSensorControls() {
-  const nowMs = millis();
-  const sensorFresh = sensorInput.lastEventMs > 0 && (nowMs - sensorInput.lastEventMs) < 1200;
-
-  if (sensorInput.active && !sensorFresh) {
-    sensorStatus = 'Sensori non aggiornati: riapri la pagina e reinclina il telefono';
-  }
-
-  const rawX = sensorInput.active ? sensorInput.beta : (typeof rotationX === 'number' ? rotationX : 0);
-  const rawY = sensorInput.active ? sensorInput.gamma : (typeof rotationY === 'number' ? rotationY : 0);
-  const rawZ = sensorInput.active ? sensorInput.alpha : (typeof rotationZ === 'number' ? rotationZ : 0);
-
-  const deltaBeta = rawX - sensorInput.baseBeta;
-  const deltaGamma = rawY - sensorInput.baseGamma;
-  const tiltX = normalizeTilt(deltaGamma, 28, 1.5);
-  const tiltY = normalizeTilt(deltaBeta, 28, 1.5);
-  const targetGravityX = tiltX * 1.05;
-  const targetGravityY = -tiltY * 1.05;
-  const twist = map(constrain(rawZ, -180, 180), -180, 180, -PI, PI);
-
-  smoothedGravityX = lerp(smoothedGravityX, targetGravityX, 0.08);
-  smoothedGravityY = lerp(smoothedGravityY, targetGravityY, 0.08);
-  smoothedTwist = lerp(smoothedTwist, twist, 0.12);
-
-  engine.world.gravity.x = smoothedGravityX;
-  engine.world.gravity.y = smoothedGravityY;
-
-  if (sensorInput.active && sensorFresh) {
-    sensorStatus = 'Sensori attivi';
-  }
-
-  flipperPower = map(abs(smoothedTwist), 0, PI / 2, 1.0, 1.35);
-
-  if (!gameOver && ball && ball.body) {
-    // rotationZ / alpha adds a very small sideways bias, useful on mobile to fine-tune the shot.
-    const twistNudge = map(smoothedTwist, -PI, PI, -0.00032, 0.00032);
-    if (abs(twistNudge) > 0.00001) {
-      Body.applyForce(ball.body, ball.body.position, { x: twistNudge, y: 0 });
-    }
-  }
-}
-
-function setupSensorListeners() {
-  if (sensorListenersAttached) {
-    console.log('[SENSOR] Listeners gia attaccati, skip');
-    return;
-  }
-
-  let eventFireCount = 0;
-  
-  const handleOrientation = (event) => {
-    eventFireCount++;
-    if (eventFireCount === 1) {
-      console.log('[SENSOR] First deviceorientation event received!', { 
-        beta: event.beta, 
-        gamma: event.gamma, 
-        alpha: event.alpha 
-      });
-    }
-    
-    sensorInput.beta = typeof event.beta === 'number' ? event.beta : 0;
-    sensorInput.gamma = typeof event.gamma === 'number' ? event.gamma : 0;
-    sensorInput.alpha = typeof event.alpha === 'number' ? event.alpha : 0;
-    sensorInput.active = true;
-    sensorInput.lastEventMs = millis();
-
-    if (!sensorInput.calibrated) {
-      console.log('[SENSOR] Calibrating baseline:', { beta: sensorInput.beta, gamma: sensorInput.gamma });
-      calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
-      sensorInput.calibrated = true;
-    }
-  };
-
-  const handleMotion = (event) => {
-    if (event.rotationRate && typeof event.rotationRate.alpha === 'number') {
-      sensorInput.alpha = event.rotationRate.alpha;
-      sensorInput.active = true;
-    }
-  };
-
-  console.log('[SENSOR] Attaching event listeners...');
-  window.addEventListener('deviceorientation', handleOrientation, true);
-  window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-  window.addEventListener('devicemotion', handleMotion, true);
-  sensorListenersAttached = true;
-  console.log('[SENSOR] Event listeners attached');
-}
-
-function updateFlippers() {
-  for (let flipper of flippers) {
-    flipper.update(flipperPower);
-  }
-}
-
-function drawBackdrop() {
-  push();
-  noStroke();
-  fill(255, 255, 255, 16);
-  rect(14, 14, width - 28, height - 28, 28);
-  fill(12, 20, 38, 160);
-  ellipse(width * 0.5, height * 0.1, width * 0.65, height * 0.18);
-  ellipse(width * 0.5, height * 0.32, width * 0.9, height * 0.22);
-  pop();
-}
-
-function drawHUD() {
-  push();
-  fill(255);
-  noStroke();
-  textAlign(LEFT, TOP);
-  textSize(max(16, width * 0.018));
-  text('Punteggio: ' + score, 20, 62);
-  text('Vite: ' + lives, 20, 88);
-
-  textAlign(RIGHT, TOP);
-  text('Tilt = gravita  Flipper = touch / frecce', width - 20, 62);
-  text('rotationZ = spinta extra', width - 20, 88);
-
-  textAlign(LEFT, TOP);
-  text(sensorStatus, 20, 114);
-  text(
-    'beta: ' + nf(sensorInput.beta, 1, 1) +
-    ' gamma: ' + nf(sensorInput.gamma, 1, 1) +
-    ' gx: ' + nf(engine.world.gravity.x, 1, 2) +
-    ' gy: ' + nf(engine.world.gravity.y, 1, 2),
-    20,
-    140
-  );
-  pop();
-}
-
-function drawGameOverOverlay() {
-  push();
-  fill(0, 180);
-  rect(0, 0, width, height);
-  fill(255);
-  textAlign(CENTER, CENTER);
-  textSize(max(30, width * 0.05));
-  text('GAME OVER', width / 2, height * 0.43);
-  textSize(max(18, width * 0.022));
-  text('Tocca per ricominciare', width / 2, height * 0.52);
-  pop();
-}
-
-function createSensorButton() {
-  sensorButton = createButton('Richiedi accesso ai sensori');
-  sensorButton.position(12, 12);
-  sensorButton.style('z-index', '9999');
-  sensorButton.style('touch-action', 'manipulation');
-  sensorButton.style('pointer-events', 'auto');
-  sensorButton.mousePressed(requestSensorAccess);
-  sensorButton.touchStarted(() => {
-    requestSensorAccess();
-    return false;
-  });
-}
-
-function requestSensorAccess() {
-  if (sensorRequestInFlight) {
-    console.log('[SENSOR] Richiesta gia in corso, skip');
-    return;
-  }
-
-  if (sensorInput.active) {
-    sensorStatus = 'Sensori gia attivi';
-    return;
-  }
-
-  if (typeof DeviceOrientationEvent === 'undefined') {
-    sensorStatus = 'Questo browser non supporta i sensori di orientamento';
-    console.error('[SENSOR] Browser non supporta DeviceOrientationEvent');
-    return;
-  }
-
-  // Check if we're in a secure context (HTTPS or localhost)
-  const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  const isFile = location.protocol === 'file:';
-  
-  if (!window.isSecureContext && !isLocalhost) {
-    sensorStatus = 'Apri il gioco via HTTPS o localhost per usare i sensori';
-    console.error('[SENSOR] Non secure context e non localhost:', { 
-      isSecureContext: window.isSecureContext, 
-      protocol: location.protocol,
-      hostname: location.hostname 
-    });
-    return;
-  }
-  
-  if (isFile) {
-    sensorStatus = 'I sensori non funzionano con file:// - usa localhost o HTTPS';
-    console.error('[SENSOR] File protocol detected');
-    return;
-  }
-
-  const requests = [];
-  sensorRequestInFlight = true;
-
-  console.log('[SENSOR] Starting permission requests...');
-  console.log('[SENSOR] DeviceOrientationEvent.requestPermission exists?', typeof DeviceOrientationEvent.requestPermission === 'function');
-  console.log('[SENSOR] DeviceMotionEvent.requestPermission exists?', typeof DeviceMotionEvent.requestPermission === 'function');
-
-  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    console.log('[SENSOR] Requesting DeviceOrientationEvent permission...');
-    requests.push(
-      DeviceOrientationEvent.requestPermission()
-        .then(result => {
-          console.log('[SENSOR] DeviceOrientation result:', result);
-          return result;
-        })
-        .catch(error => {
-          console.error('[SENSOR] DeviceOrientation error:', error);
-          return 'error';
-        })
-    );
-  }
-
-  if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    console.log('[SENSOR] Requesting DeviceMotionEvent permission...');
-    requests.push(
-      DeviceMotionEvent.requestPermission()
-        .then(result => {
-          console.log('[SENSOR] DeviceMotion result:', result);
-          return result;
-        })
-        .catch(error => {
-          console.error('[SENSOR] DeviceMotion error:', error);
-          return 'error';
-        })
-    );
-  }
-
-  if (requests.length === 0) {
-    console.log('[SENSOR] No requestPermission API, assuming sensors auto-granted');
-    sensorInput.active = true;
-    sensorInput.calibrated = false;
-    setupSensorListeners();
-    calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
-    sensorStatus = 'Sensori attivi';
-    if (sensorButton) {
-      sensorButton.remove();
-      sensorButton = null;
-    }
-    sensorRequestInFlight = false;
-    return;
-  }
-
-  Promise.allSettled(requests)
-    .then((results) => {
-      console.log('[SENSOR] All permissions resolved:', results);
-      const values = results
-        .filter((result) => result.status === 'fulfilled')
-        .map((result) => result.value);
-      const granted = values.includes('granted');
-      const denied = values.includes('denied');
-
-      if (denied && !granted) {
-        sensorStatus = 'Permesso sensori negato dal browser';
-        console.error('[SENSOR] Permission denied by user');
-        return;
-      }
-
-      console.log('[SENSOR] Permission flow completed, enabling listeners...');
-      sensorInput.active = true;
-      sensorInput.calibrated = false;
-      setupSensorListeners();
-      calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
-      sensorStatus = 'Sensori attivi';
-      if (sensorButton) {
-        sensorButton.remove();
-        sensorButton = null;
-      }
-    })
-    .catch((error) => {
-      // Safari may occasionally reject one permission call even when orientation events are available.
-      setupSensorListeners();
-      sensorInput.active = true;
-      sensorInput.calibrated = false;
-      sensorStatus = 'Sensori parzialmente attivi, prova a inclinare';
-      console.error('[SENSOR] Promise error:', error);
-    })
-    .finally(() => {
-      sensorRequestInFlight = false;
-    });
-}
-
-function setFlippersFromPointer(xPosition) {
-  if (gameOver) {
-    restartGame();
-    return;
-  }
-
-  const leftPressed = xPosition < width * 0.5;
-  flippers[0].setActive(leftPressed);
-  flippers[1].setActive(!leftPressed);
-}
-
-function clearFlippers() {
-  for (let flipper of flippers) {
-    flipper.setActive(false);
-  }
-}
-
-function syncFlippersWithTouches() {
-  let leftActive = false;
-  let rightActive = false;
-
-  for (let touch of touches) {
-    if (touch.x < width * 0.5) {
-      leftActive = true;
+function updateTouchStateFromTouches() {
+  leftTouchActive = false;
+  rightTouchActive = false;
+
+  for (const t of touches) {
+    if (t.x < width * 0.5) {
+      leftTouchActive = true;
     } else {
-      rightActive = true;
+      rightTouchActive = true;
     }
   }
-
-  flippers[0].setActive(leftActive);
-  flippers[1].setActive(rightActive);
 }
 
 function touchStarted() {
-  if (touches.length > 0) {
-    if (gameOver) {
-      restartGame();
-      return false;
-    }
-
-    syncFlippersWithTouches();
+  if (gameOver) {
+    restartGame();
+    return false;
   }
-
+  updateTouchStateFromTouches();
   return false;
 }
 
 function touchMoved() {
-  if (gameOver) {
-    return false;
-  }
-
-  syncFlippersWithTouches();
+  updateTouchStateFromTouches();
   return false;
 }
 
 function touchEnded() {
-  if (touches.length > 0) {
-    syncFlippersWithTouches();
-  } else {
-    clearFlippers();
-  }
+  updateTouchStateFromTouches();
   return false;
 }
 
 function mousePressed() {
-  setFlippersFromPointer(mouseX);
-  return false;
+  if (gameOver) {
+    restartGame();
+    return;
+  }
+
+  if (mouseX < width * 0.5) {
+    leftTouchActive = true;
+  } else {
+    rightTouchActive = true;
+  }
 }
 
 function mouseReleased() {
-  clearFlippers();
-  return false;
-}
-
-function keyPressed() {
-  if (key === 'r' || key === 'R') {
-    restartGame();
-    return false;
-  }
-
-  if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') {
-    flippers[0].setActive(true);
-  }
-
-  if (keyCode === RIGHT_ARROW || key === 'l' || key === 'L') {
-    flippers[1].setActive(true);
-  }
-
-  return false;
-}
-
-function keyReleased() {
-  if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') {
-    flippers[0].setActive(false);
-  }
-
-  if (keyCode === RIGHT_ARROW || key === 'l' || key === 'L') {
-    flippers[1].setActive(false);
-  }
-
-  return false;
+  leftTouchActive = false;
+  rightTouchActive = false;
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  Composite.clear(engine.world, false);
-  buildPlayfield();
-  addWorldBodies();
-  resetBall(false);
 }
