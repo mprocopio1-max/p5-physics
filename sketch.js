@@ -20,9 +20,30 @@ let nextSpawnFrame = -1;
 let leftTouchActive = false;
 let rightTouchActive = false;
 let sensorButton;
+let sensorTiltX = 0;
+let sensorTiltY = 0;
+let sensorHasData = false;
+let sensorPermissionGranted = false;
+let sensorListenerInstalled = false;
 
 const BALL_RADIUS = 12;
 const MAX_BALL_SPEED = 22;
+
+function installOrientationListener() {
+  if (sensorListenerInstalled) {
+    return;
+  }
+
+  window.addEventListener('deviceorientation', (event) => {
+    if (event && event.gamma != null && event.beta != null) {
+      sensorTiltX = event.gamma;
+      sensorTiltY = event.beta;
+      sensorHasData = true;
+    }
+  });
+
+  sensorListenerInstalled = true;
+}
 
 function setupField() {
   const wallColor = color(40, 57, 77);
@@ -249,31 +270,60 @@ function createSensorButton() {
   sensorButton.position(10, 10);
   sensorButton.style('z-index', '10');
 
-  sensorButton.mousePressed(() => {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission().catch(console.error);
-    }
+  sensorButton.mousePressed(async () => {
+    try {
+      let orientationGranted = true;
+      let motionGranted = true;
 
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-      DeviceMotionEvent.requestPermission().catch(console.error);
-    }
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        orientationGranted = (await DeviceOrientationEvent.requestPermission()) === 'granted';
+      }
 
-    sensorButton.remove();
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        motionGranted = (await DeviceMotionEvent.requestPermission()) === 'granted';
+      }
+
+      sensorPermissionGranted = orientationGranted && motionGranted;
+      installOrientationListener();
+
+      if (sensorPermissionGranted || typeof DeviceOrientationEvent?.requestPermission !== 'function') {
+        sensorButton.remove();
+      } else {
+        sensorButton.html('Sensor denied - tap again');
+      }
+    } catch (error) {
+      console.error(error);
+      sensorButton.html('Sensor error - tap again');
+    }
   });
 }
 
+function getTiltValues() {
+  if (sensorHasData) {
+    return {
+      tiltX: constrain(sensorTiltX, -60, 60),
+      tiltY: constrain(sensorTiltY, -60, 60)
+    };
+  }
+
+  return {
+    tiltX: constrain(rotationY || 0, -60, 60),
+    tiltY: constrain(rotationX || 0, -60, 60)
+  };
+}
+
 function updateGravityFromSensors() {
-  const tiltX = constrain(rotationY || 0, -45, 45);
-  const tiltY = constrain(rotationX || 0, -45, 45);
+  const { tiltX, tiltY } = getTiltValues();
 
   // Keep base downward pull while tilt shifts horizontal/vertical flow.
-  world.gravity.x = map(tiltX, -45, 45, -0.55, 0.55);
-  world.gravity.y = 0.75 + map(tiltY, -45, 45, -0.5, 0.5);
+  world.gravity.x = map(tiltX, -60, 60, -1.05, 1.05);
+  world.gravity.y = 0.7 + map(tiltY, -60, 60, -0.45, 0.45);
 }
 
 function updateFlipperInput() {
-  const sensorLeft = (rotationY || 0) < -17;
-  const sensorRight = (rotationY || 0) > 17;
+  const { tiltX } = getTiltValues();
+  const sensorLeft = tiltX < -14;
+  const sensorRight = tiltX > 14;
   const keyboardLeft = keyIsDown(65) || keyIsDown(37);
   const keyboardRight = keyIsDown(68) || keyIsDown(39);
 
@@ -305,6 +355,10 @@ function drawHud() {
   textSize(20);
   text('Score: ' + score, 16, 54);
   text('Lives: ' + lives, 16, 80);
+  textSize(13);
+
+  const source = sensorHasData ? 'native sensor' : 'p5 fallback';
+  text('Tilt source: ' + source, 16, 108);
 
   if (gameOver) {
     textAlign(CENTER, CENTER);
@@ -334,6 +388,12 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   engine = Engine.create();
   world = engine.world;
+
+  // Non-iOS devices can start streaming orientation data immediately.
+  if (!(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) {
+    sensorPermissionGranted = true;
+    installOrientationListener();
+  }
 
   setupField();
   spawnBall();
