@@ -379,7 +379,14 @@ function drawGameOverOverlay() {
 function createSensorButton() {
   sensorButton = createButton('Richiedi accesso ai sensori');
   sensorButton.position(12, 12);
+  sensorButton.style('z-index', '9999');
+  sensorButton.style('touch-action', 'manipulation');
+  sensorButton.style('pointer-events', 'auto');
   sensorButton.mousePressed(requestSensorAccess);
+  sensorButton.touchStarted(() => {
+    requestSensorAccess();
+    return false;
+  });
 }
 
 function requestSensorAccess() {
