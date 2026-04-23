@@ -1,3 +1,6 @@
+const ObstacleBodies = Matter.Bodies;
+const ObstacleBody = Matter.Body;
+
 class Obstacle {
   constructor(x, y, width = 300, height = 50, angle = 0, options = {}) {
     this.width = width;
@@ -22,10 +25,10 @@ class Obstacle {
 
     if (this.shape === 'circle') {
       this.radius = options.radius || width * 0.5;
-      this.body = Bodies.circle(x, y, this.radius, bodyOptions);
+      this.body = ObstacleBodies.circle(x, y, this.radius, bodyOptions);
     } else {
-      this.body = Bodies.rectangle(x, y, width, height, bodyOptions);
-      Body.setAngle(this.body, angle);
+      this.body = ObstacleBodies.rectangle(x, y, width, height, bodyOptions);
+      ObstacleBody.setAngle(this.body, angle);
     }
 
     this.body.plugin = {

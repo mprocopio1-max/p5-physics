@@ -1,3 +1,7 @@
+const FlipperBodies = Matter.Bodies;
+const FlipperBody = Matter.Body;
+const FlipperConstraint = Matter.Constraint;
+
 class Flipper {
   constructor(x, y, length, thickness, side = 'left') {
     this.x = x;
@@ -8,7 +12,7 @@ class Flipper {
     this.direction = side === 'left' ? 1 : -1;
 
     const centerX = x + this.direction * length * 0.45;
-    this.body = Bodies.rectangle(centerX, y, length, thickness, {
+    this.body = FlipperBodies.rectangle(centerX, y, length, thickness, {
       label: 'flipper',
       friction: 0.004,
       frictionAir: 0.001,
@@ -16,7 +20,7 @@ class Flipper {
       density: 0.006
     });
 
-    this.pivot = Matter.Constraint.create({
+    this.pivot = FlipperConstraint.create({
       pointA: { x, y },
       bodyB: this.body,
       pointB: { x: -this.direction * length * 0.45, y: 0 },
@@ -26,7 +30,7 @@ class Flipper {
 
     this.restAngle = side === 'left' ? -0.28 : Math.PI + 0.28;
     this.activeAngle = side === 'left' ? -1.02 : Math.PI - 1.02;
-    Body.setAngle(this.body, this.restAngle);
+    FlipperBody.setAngle(this.body, this.restAngle);
 
     this.color = side === 'left' ? color(238, 103, 88) : color(90, 169, 255);
   }
@@ -37,8 +41,8 @@ class Flipper {
 
     // Fast approach to target angle keeps flipper snappy without jitter.
     const speed = constrain(delta * 0.42, -0.45, 0.45);
-    Body.setAngularVelocity(this.body, speed);
-    Body.setAngle(this.body, this.body.angle + speed);
+    FlipperBody.setAngularVelocity(this.body, speed);
+    FlipperBody.setAngle(this.body, this.body.angle + speed);
   }
 
   display() {

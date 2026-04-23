@@ -1,3 +1,6 @@
+const BrushBodies = Matter.Bodies;
+const BrushBody = Matter.Body;
+
 class Brush {
   constructor(x, y, radius = 12, options = {}) {
     this.radius = radius;
@@ -5,7 +8,7 @@ class Brush {
     this.baseColor = this.color;
     this.hitFlashFrames = 0;
 
-    this.body = Bodies.circle(x, y, radius, {
+    this.body = BrushBodies.circle(x, y, radius, {
       label: options.label || 'ball',
       restitution: options.restitution ?? 0.35,
       friction: options.friction ?? 0.002,
@@ -37,7 +40,7 @@ class Brush {
 
   boost(multiplier = 1.2) {
     const velocity = this.body.velocity;
-    Body.setVelocity(this.body, {
+    BrushBody.setVelocity(this.body, {
       x: velocity.x * multiplier,
       y: velocity.y * multiplier
     });
@@ -45,15 +48,15 @@ class Brush {
   }
 
   applyImpulse(forceX, forceY) {
-    Body.applyForce(this.body, this.body.position, { x: forceX, y: forceY });
+    BrushBody.applyForce(this.body, this.body.position, { x: forceX, y: forceY });
     this.onCollision();
   }
 
   reset(x, y) {
-    Body.setPosition(this.body, { x, y });
-    Body.setVelocity(this.body, { x: 0, y: 0 });
-    Body.setAngularVelocity(this.body, 0);
-    Body.setAngle(this.body, 0);
+    BrushBody.setPosition(this.body, { x, y });
+    BrushBody.setVelocity(this.body, { x: 0, y: 0 });
+    BrushBody.setAngularVelocity(this.body, 0);
+    BrushBody.setAngle(this.body, 0);
   }
 
   keepInBounds() {
@@ -61,20 +64,20 @@ class Brush {
     let r = this.radius;
         
        if (pos.x > width-r){
-            Body.setPosition(this.body, { x: width-r, y: pos.y });
-            Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });
+            BrushBody.setPosition(this.body, { x: width-r, y: pos.y });
+            BrushBody.setVelocity(this.body, { x: 0, y: this.body.velocity.y });
         }
         if (pos.x < r){ 
-            Body.setPosition(this.body, { x: r, y: pos.y });
-            Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });         
+            BrushBody.setPosition(this.body, { x: r, y: pos.y });
+            BrushBody.setVelocity(this.body, { x: 0, y: this.body.velocity.y });         
         }
         if (pos.y > height-r){
-            Body.setPosition(this.body, { x: pos.x, y: height-r });
-            Body.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
+            BrushBody.setPosition(this.body, { x: pos.x, y: height-r });
+            BrushBody.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
         }
         if (pos.y < r){
-            Body.setPosition(this.body, { x: pos.x, y: r });
-            Body.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
+            BrushBody.setPosition(this.body, { x: pos.x, y: r });
+            BrushBody.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
         }
     }
 }
