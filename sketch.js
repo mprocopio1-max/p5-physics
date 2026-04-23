@@ -25,6 +25,8 @@ let sensorTiltY = 0;
 let sensorHasData = false;
 let sensorPermissionGranted = false;
 let sensorListenerInstalled = false;
+let motionListenerInstalled = false;
+let sensorStatusMessage = 'Tap sensor button on mobile';
 
 const BALL_RADIUS = 12;
 const MAX_BALL_SPEED = 22;
@@ -39,10 +41,34 @@ function installOrientationListener() {
       sensorTiltX = event.gamma;
       sensorTiltY = event.beta;
       sensorHasData = true;
+      sensorStatusMessage = 'Sensor active (orientation)';
     }
   });
 
   sensorListenerInstalled = true;
+}
+
+function installMotionListener() {
+  if (motionListenerInstalled) {
+    return;
+  }
+
+  window.addEventListener('devicemotion', (event) => {
+    const a = event && event.accelerationIncludingGravity;
+    if (!a) {
+      return;
+    }
+
+    if (a.x != null && a.y != null) {
+      // Fallback path for devices where orientation is blocked/unreliable.
+      sensorTiltX = a.x * 6;
+      sensorTiltY = -a.y * 6;
+      sensorHasData = true;
+      sensorStatusMessage = 'Sensor active (motion fallback)';
+    }
+  });
+
+  motionListenerInstalled = true;
 }
 
 function setupField() {
@@ -272,6 +298,13 @@ function createSensorButton() {
 
   sensorButton.mousePressed(async () => {
     try {
+      const isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      if (!window.isSecureContext && !isLocalHost) {
+        sensorStatusMessage = 'Sensors require HTTPS (or localhost)';
+        sensorButton.html('Need HTTPS / localhost');
+        return;
+      }
+
       let orientationGranted = true;
       let motionGranted = true;
 
@@ -285,14 +318,18 @@ function createSensorButton() {
 
       sensorPermissionGranted = orientationGranted && motionGranted;
       installOrientationListener();
+      installMotionListener();
 
       if (sensorPermissionGranted || typeof DeviceOrientationEvent?.requestPermission !== 'function') {
+        sensorStatusMessage = 'Sensor permission granted';
         sensorButton.remove();
       } else {
+        sensorStatusMessage = 'Sensor permission denied';
         sensorButton.html('Sensor denied - tap again');
       }
     } catch (error) {
       console.error(error);
+      sensorStatusMessage = 'Sensor permission error';
       sensorButton.html('Sensor error - tap again');
     }
   });
@@ -359,6 +396,7 @@ function drawHud() {
 
   const source = sensorHasData ? 'native sensor' : 'p5 fallback';
   text('Tilt source: ' + source, 16, 108);
+  text('Sensor: ' + sensorStatusMessage, 16, 126);
 
   if (gameOver) {
     textAlign(CENTER, CENTER);
@@ -393,6 +431,8 @@ function setup() {
   if (!(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) {
     sensorPermissionGranted = true;
     installOrientationListener();
+    installMotionListener();
+    sensorStatusMessage = 'Sensor listener installed';
   }
 
   setupField();
