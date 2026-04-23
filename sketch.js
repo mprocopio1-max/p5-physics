@@ -26,7 +26,11 @@ let sensorInput = {
   baseBeta: 0,
   baseGamma: 0,
   active: false,
+  calibrated: false,
+  lastEventMs: 0,
 };
+
+let sensorListenersAttached = false;
 
 let smoothedGravityX = 0;
 let smoothedGravityY = 0;
@@ -259,6 +263,13 @@ function restartGame() {
 }
 
 function updateSensorControls() {
+  const nowMs = millis();
+  const sensorFresh = sensorInput.lastEventMs > 0 && (nowMs - sensorInput.lastEventMs) < 1200;
+
+  if (sensorInput.active && !sensorFresh) {
+    sensorStatus = 'Sensori non aggiornati: riapri la pagina e reinclina il telefono';
+  }
+
   const rawX = sensorInput.active ? sensorInput.beta : (typeof rotationX === 'number' ? rotationX : 0);
   const rawY = sensorInput.active ? sensorInput.gamma : (typeof rotationY === 'number' ? rotationY : 0);
   const rawZ = sensorInput.active ? sensorInput.alpha : (typeof rotationZ === 'number' ? rotationZ : 0);
@@ -278,6 +289,10 @@ function updateSensorControls() {
   engine.world.gravity.x = smoothedGravityX;
   engine.world.gravity.y = smoothedGravityY;
 
+  if (sensorInput.active && sensorFresh) {
+    sensorStatus = 'Sensori attivi';
+  }
+
   flipperPower = map(abs(smoothedTwist), 0, PI / 2, 1.0, 1.35);
 
   if (!gameOver && ball && ball.body) {
@@ -290,6 +305,11 @@ function updateSensorControls() {
 }
 
 function setupSensorListeners() {
+  if (sensorListenersAttached) {
+    console.log('[SENSOR] Listeners gia attaccati, skip');
+    return;
+  }
+
   let eventFireCount = 0;
   
   const handleOrientation = (event) => {
@@ -306,6 +326,7 @@ function setupSensorListeners() {
     sensorInput.gamma = typeof event.gamma === 'number' ? event.gamma : 0;
     sensorInput.alpha = typeof event.alpha === 'number' ? event.alpha : 0;
     sensorInput.active = true;
+    sensorInput.lastEventMs = millis();
 
     if (!sensorInput.calibrated) {
       console.log('[SENSOR] Calibrating baseline:', { beta: sensorInput.beta, gamma: sensorInput.gamma });
@@ -325,6 +346,7 @@ function setupSensorListeners() {
   window.addEventListener('deviceorientation', handleOrientation, true);
   window.addEventListener('deviceorientationabsolute', handleOrientation, true);
   window.addEventListener('devicemotion', handleMotion, true);
+  sensorListenersAttached = true;
   console.log('[SENSOR] Event listeners attached');
 }
 
@@ -360,6 +382,14 @@ function drawHUD() {
 
   textAlign(LEFT, TOP);
   text(sensorStatus, 20, 114);
+  text(
+    'beta: ' + nf(sensorInput.beta, 1, 1) +
+    ' gamma: ' + nf(sensorInput.gamma, 1, 1) +
+    ' gx: ' + nf(engine.world.gravity.x, 1, 2) +
+    ' gy: ' + nf(engine.world.gravity.y, 1, 2),
+    20,
+    140
+  );
   pop();
 }
 
