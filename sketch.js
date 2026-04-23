@@ -290,13 +290,25 @@ function updateSensorControls() {
 }
 
 function setupSensorListeners() {
+  let eventFireCount = 0;
+  
   const handleOrientation = (event) => {
+    eventFireCount++;
+    if (eventFireCount === 1) {
+      console.log('[SENSOR] First deviceorientation event received!', { 
+        beta: event.beta, 
+        gamma: event.gamma, 
+        alpha: event.alpha 
+      });
+    }
+    
     sensorInput.beta = typeof event.beta === 'number' ? event.beta : 0;
     sensorInput.gamma = typeof event.gamma === 'number' ? event.gamma : 0;
     sensorInput.alpha = typeof event.alpha === 'number' ? event.alpha : 0;
     sensorInput.active = true;
 
     if (!sensorInput.calibrated) {
+      console.log('[SENSOR] Calibrating baseline:', { beta: sensorInput.beta, gamma: sensorInput.gamma });
       calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
       sensorInput.calibrated = true;
     }
@@ -309,9 +321,11 @@ function setupSensorListeners() {
     }
   };
 
+  console.log('[SENSOR] Attaching event listeners...');
   window.addEventListener('deviceorientation', handleOrientation, true);
   window.addEventListener('deviceorientationabsolute', handleOrientation, true);
   window.addEventListener('devicemotion', handleMotion, true);
+  console.log('[SENSOR] Event listeners attached');
 }
 
 function updateFlippers() {
@@ -371,26 +385,71 @@ function createSensorButton() {
 function requestSensorAccess() {
   if (typeof DeviceOrientationEvent === 'undefined') {
     sensorStatus = 'Questo browser non supporta i sensori di orientamento';
+    console.error('[SENSOR] Browser non supporta DeviceOrientationEvent');
     return;
   }
 
-  if (!window.isSecureContext && location.protocol !== 'http:' && location.protocol !== 'https:') {
+  // Check if we're in a secure context (HTTPS or localhost)
+  const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const isFile = location.protocol === 'file:';
+  
+  if (!window.isSecureContext && !isLocalhost) {
     sensorStatus = 'Apri il gioco via HTTPS o localhost per usare i sensori';
+    console.error('[SENSOR] Non secure context e non localhost:', { 
+      isSecureContext: window.isSecureContext, 
+      protocol: location.protocol,
+      hostname: location.hostname 
+    });
+    return;
+  }
+  
+  if (isFile) {
+    sensorStatus = 'I sensori non funzionano con file:// - usa localhost o HTTPS';
+    console.error('[SENSOR] File protocol detected');
     return;
   }
 
   const requests = [];
 
+  console.log('[SENSOR] Starting permission requests...');
+  console.log('[SENSOR] DeviceOrientationEvent.requestPermission exists?', typeof DeviceOrientationEvent.requestPermission === 'function');
+  console.log('[SENSOR] DeviceMotionEvent.requestPermission exists?', typeof DeviceMotionEvent.requestPermission === 'function');
+
   if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    requests.push(DeviceOrientationEvent.requestPermission().catch(console.error));
+    console.log('[SENSOR] Requesting DeviceOrientationEvent permission...');
+    requests.push(
+      DeviceOrientationEvent.requestPermission()
+        .then(result => {
+          console.log('[SENSOR] DeviceOrientation result:', result);
+          return result;
+        })
+        .catch(error => {
+          console.error('[SENSOR] DeviceOrientation error:', error);
+          throw error;
+        })
+    );
   }
 
   if (typeof DeviceMotionEvent.requestPermission === 'function') {
-    requests.push(DeviceMotionEvent.requestPermission().catch(console.error));
+    console.log('[SENSOR] Requesting DeviceMotionEvent permission...');
+    requests.push(
+      DeviceMotionEvent.requestPermission()
+        .then(result => {
+          console.log('[SENSOR] DeviceMotion result:', result);
+          return result;
+        })
+        .catch(error => {
+          console.error('[SENSOR] DeviceMotion error:', error);
+          throw error;
+        })
+    );
   }
 
   if (requests.length === 0) {
+    console.log('[SENSOR] No requestPermission API, assuming sensors auto-granted');
     sensorInput.active = true;
+    sensorInput.calibrated = false;
+    setupSensorListeners();
     calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
     sensorStatus = 'Sensori attivi';
     if (sensorButton) {
@@ -400,24 +459,32 @@ function requestSensorAccess() {
     return;
   }
 
-  Promise.all(requests).then((results) => {
-    const denied = results.some((result) => result !== 'granted');
+  Promise.all(requests)
+    .then((results) => {
+      console.log('[SENSOR] All permissions resolved:', results);
+      const denied = results.some((result) => result !== 'granted');
 
-    if (denied) {
-      sensorStatus = 'Permesso sensori negato dal browser';
-      return;
-    }
+      if (denied) {
+        sensorStatus = 'Permesso sensori negato dal browser';
+        console.error('[SENSOR] Permission denied by user');
+        return;
+      }
 
-    sensorInput.active = true;
-    sensorInput.calibrated = false;
-    sensorStatus = 'Sensori attivi';
-    if (sensorButton) {
-      sensorButton.remove();
-      sensorButton = null;
-    }
-  }).catch(() => {
-    sensorStatus = 'Impossibile attivare i sensori in questo browser';
-  });
+      console.log('[SENSOR] All permissions granted! Setting up listeners...');
+      sensorInput.active = true;
+      sensorInput.calibrated = false;
+      setupSensorListeners();
+      calibrateSensorBaseline(sensorInput.beta, sensorInput.gamma);
+      sensorStatus = 'Sensori attivi';
+      if (sensorButton) {
+        sensorButton.remove();
+        sensorButton = null;
+      }
+    })
+    .catch((error) => {
+      sensorStatus = 'Errore nella richiesta dei sensori: ' + error.message;
+      console.error('[SENSOR] Promise error:', error);
+    });
 }
 
 function setFlippersFromPointer(xPosition) {
